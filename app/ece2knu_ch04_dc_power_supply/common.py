@@ -56,7 +56,7 @@ def get_simulation_result(file_name, start=0, end=-1):
         data_file.seek(0)
 
         line = data_file.readline()
-        labels = re.split(', | ,|\t', line)
+        labels = re.split(r'[,\t ]+', line.strip())
         labels = [s.strip().upper() for s in labels]
 
         data = {}
@@ -66,7 +66,7 @@ def get_simulation_result(file_name, start=0, end=-1):
                 data[label] = []
 
             for line in data_file:
-                values = re.split(', | ,|\t', line)
+                values = re.split(r'[,\t ]+', line.strip())
                 for i in range(len(values)):
                     value = float(values[i]) * 1000
                     data[labels[i]].append(value)
@@ -88,7 +88,7 @@ def get_simulation_result(file_name, start=0, end=-1):
                 for line in data_file:
                     if (line.startswith('Step Information:')):
                         break
-                    values = re.split(', | ,|\t', line)
+                    values = re.split(r'[,\t ]+', line.strip())
                     for i in range(len(values)):
                         value = float(values[i]) * 1000
                         data[labels_new[i]].append(value)
