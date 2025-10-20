@@ -286,10 +286,7 @@ def calculate_square_wave_frequency(times, vins):
         pb = rising_edges[idx*2+1]
         periods.append(times[pb] - times[pa])
 
-    # # 주기 계산 (연속된 상승 에지 사이의 평균 시간)
-    # for idx, edge_idx in enumerate(rising_edges):
-
-    # periods = times[rising_edges[1:]] - times[rising_edges[:-1]]
+    # 주기 계산 (연속된 상승 에지 사이의 평균 시간)
     average_period = np.mean(periods)
 
     # 주파수 계산 (주기의 역수)
