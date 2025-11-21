@@ -1,0 +1,15 @@
+* M2N7000 tuned model for textbook CS+Rs bias point
+.SUBCKT M2N7000  D  G  S
+
+* Core MOSFET (bulk tied to source)
+M1  D  G  S  S  M2N7000_CORE  L=2u  W=0.12
+
+.MODEL M2N7000_CORE  NMOS( Level=2 Gamma=0 Delta=0 Vmax=0 Xj=0
++               Tox=2u Uo=600 Phi=0.6
++               Kp=1.073u        ; tuned (was 3.3u)
++               Vto=1.27         ; tuned (was 1.335 / 1.73)
++               W=0.12 L=2u Rs=20m Vto=1.27
++               Rd=0.5489 Cgso=73.61p Cgdo=6.487p Cbd=74.46p Mj=0.5
++               Pb=0.8 Fc=0.5 Is=10f Lambda=0.02 )
+
+.ENDS M2N7000
