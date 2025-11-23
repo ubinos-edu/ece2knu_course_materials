@@ -105,6 +105,9 @@ def get_simulation_result(file_name, start=0, end=-1):
 
     return data
 
+def get_oscilloscpoe_result_digilent(path: str, start: int = 0, end: int = -1):
+    return get_simulation_result_kicad(path, start, end)
+
 def get_simulation_result_kicad(path: str, start: int = 0, end: int = -1):
     """
     CSV 파일을 읽어 time + N개의 신호 컬럼을 DataFrame 으로 반환한다.
@@ -125,6 +128,7 @@ def get_simulation_result_kicad(path: str, start: int = 0, end: int = -1):
         sep=r"[;,|\t]",      # 세미콜론, 콤마, 탭 모두 허용
         engine="python",
         comment="#",
+        encoding_errors="replace",
         skip_blank_lines=True
     )
 
