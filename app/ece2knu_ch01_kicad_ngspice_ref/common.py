@@ -56,7 +56,7 @@ def get_simulation_result(file_name, start=0, end=-1):
         data_file.seek(0)
 
         line = data_file.readline()
-        labels = re.split(', | ,|\t', line)
+        labels = re.split(r'[,\t ]+', line.strip())
         labels = [s.strip().upper() for s in labels]
 
         data = {}
@@ -66,7 +66,7 @@ def get_simulation_result(file_name, start=0, end=-1):
                 data[label] = []
 
             for line in data_file:
-                values = re.split(', | ,|\t', line)
+                values = re.split(r'[,\t ]+', line.strip())
                 for i in range(len(values)):
                     value = float(values[i]) * 1000
                     data[labels[i]].append(value)
@@ -88,7 +88,7 @@ def get_simulation_result(file_name, start=0, end=-1):
                 for line in data_file:
                     if (line.startswith('Step Information:')):
                         break
-                    values = re.split(', | ,|\t', line)
+                    values = re.split(r'[,\t ]+', line.strip())
                     for i in range(len(values)):
                         value = float(values[i]) * 1000
                         data[labels_new[i]].append(value)
@@ -104,6 +104,69 @@ def get_simulation_result(file_name, start=0, end=-1):
         print("data['%s'] : sample number = %d" % (label, len(data[label])))
 
     return data
+
+def get_oscilloscpoe_result_keysight(path: str, start: int = 0, end: int = -1):
+    """
+    Keysight 오실로스코프(EDUX/DSOX 시리즈) CSV 파일을 읽어
+    TIME + N개의 채널 컬럼(CH1, CH2, ...)을 dict 로 반환한다.
+    파일 앞부분의 메타데이터(Address, Model, Serial Number, Start Time)는
+    'Sample Count' 헤더 줄을 찾아 건너뛴다.
+    줄 끝의 여분 콤마로 생기는 빈 컬럼은 제거한다.
+    TIME 의 단위는 ms 로 변환하여 반환한다.
+    Parameters
+    ----------
+    path : str
+        CSV 파일 경로
+    start : int, default 0
+        읽을 시작 row index (0-based)
+    end : int, default -1
+        읽을 끝 row index. -1 이면 파일 끝까지
+    """
+    # 헤더 줄('Sample Count'로 시작) 위치 찾기
+    header_row = None
+    with open(path, encoding="utf-8", errors="replace") as f:
+        for i, line in enumerate(f):
+            if line.startswith("Sample Count"):
+                header_row = i
+                break
+    if header_row is None:
+        raise ValueError(f"'Sample Count' 헤더를 찾을 수 없음: {path}")
+    # CSV 읽기
+    df = pd.read_csv(
+        path,
+        sep=",",
+        skiprows=header_row,
+        index_col=False,        # 줄 끝 콤마 때문에 첫 컬럼이 인덱스로 잡히는 것 방지
+        encoding_errors="replace",
+        skip_blank_lines=True,
+    )
+    # 마지막에 빈 컬럼 제거
+    df = df.dropna(axis=1, how="all")
+    # 컬럼명 정리: Time(s) → TIME, 1(VOLT) → CH1, 2(VOLT) → CH2, ...
+    rename = {"Sample Count": "INDEX", "Time(s)": "TIME"}
+    for col in df.columns:
+        if col.endswith("(VOLT)"):
+            rename[col] = "Sample CH" + col.split("(")[0]
+    df = df.rename(columns=rename)
+    # 숫자로 변환
+    for col in df.columns:
+        df[col] = pd.to_numeric(df[col], errors="coerce")
+    # TIME 단위 변환: s → ms
+    df["TIME"] = df["TIME"] * 1000.0
+    # NaN 제거
+    df = df.dropna().reset_index(drop=True)
+    # 범위 잘라내기
+    if end == -1:
+        df = df.iloc[start:]
+    else:
+        df = df.iloc[start:end]
+    data = df.to_dict(orient="list")
+    for label in list(data.keys()):
+        print("data['%s'] : sample number = %d" % (label, len(data[label])))
+    return data
+
+def get_oscilloscpoe_result_digilent(path: str, start: int = 0, end: int = -1):
+    return get_simulation_result_kicad(path, start, end)
 
 def get_simulation_result_kicad(path: str, start: int = 0, end: int = -1):
     """
@@ -125,6 +188,7 @@ def get_simulation_result_kicad(path: str, start: int = 0, end: int = -1):
         sep=r"[;,|\t]",      # 세미콜론, 콤마, 탭 모두 허용
         engine="python",
         comment="#",
+        encoding_errors="replace",
         skip_blank_lines=True
     )
 
@@ -269,25 +333,69 @@ def set_plot_size(xrate, yrate):
 
 set_plot_size.g_plt_figsize = []
 
-
 def calculate_square_wave_frequency(times, vins):
     # 전압 값의 중간값을 임계값으로 설정
     threshold = (np.max(vins) + np.min(vins)) / 2
 
     # 상승 에지 감지
     rising_edges = np.where((vins[:-1] < threshold) & (vins[1:] >= threshold))[0]
-
-    if len(rising_edges) < 2:
+    edges_len = len(rising_edges)
+    if edges_len < 2:
         return None  # 주기를 계산할 수 없음
 
+    periods = []
+    for idx in range(int(edges_len/2)):
+        pa = rising_edges[idx*2]
+        pb = rising_edges[idx*2+1]
+        periods.append(times[pb] - times[pa])
+
     # 주기 계산 (연속된 상승 에지 사이의 평균 시간)
-    periods = times[rising_edges[1:]] - times[rising_edges[:-1]]
     average_period = np.mean(periods)
 
     # 주파수 계산 (주기의 역수)
     frequency = 1 / average_period
 
     return frequency
+
+def calculate_square_wave_frequency_t1_t2_duty(times, vins):
+    # 전압 값의 중간값을 임계값으로 설정
+    threshold = (np.max(vins) + np.min(vins)) / 2
+
+    # 상승 에지 감지
+    rising_edges = np.where((vins[:-1] < threshold) & (vins[1:] >= threshold))[0]
+    riging_edges_len = len(rising_edges)
+    if riging_edges_len < 2:
+        return None  # 주기를 계산할 수 없음
+
+    # 하강 에지 감지
+    first_riging_edge = rising_edges[0]
+    falling_edges = np.where((vins[first_riging_edge:-1] >= threshold) & (vins[first_riging_edge+1:] < threshold))[0]
+    falling_edges = falling_edges + first_riging_edge
+    falling_edges_len = len(falling_edges)
+    if falling_edges_len < 2:
+        return None  # 주기를 계산할 수 없음
+
+    edges_len = min(riging_edges_len, falling_edges_len)
+    periods = []
+    t1 = []
+    t2 = []
+    for idx in range(int(edges_len/2)):
+        pa = rising_edges[idx*2]
+        pb = falling_edges[idx*2]
+        pc = rising_edges[idx*2+1]
+        t1.append(times[pb] - times[pa])
+        t2.append(times[pc] - times[pb])
+        periods.append(times[pc] - times[pa])
+
+    average_period = np.mean(periods)
+    average_t1 = np.mean(t1)
+    average_t2 = np.mean(t2)
+    duty = (average_t1 / average_period) * 100.0
+
+    # 주파수 계산 (주기의 역수)
+    frequency = 1 / average_period
+
+    return frequency, average_t1, average_t2, duty
 
 def display_image(file_path, width=None, height=None):
     if os.path.exists(file_path):
