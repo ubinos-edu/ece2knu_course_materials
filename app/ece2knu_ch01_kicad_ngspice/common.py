@@ -1,4 +1,5 @@
 import matplotlib.pyplot as plt
+from matplotlib.ticker import EngFormatter
 import numpy as np
 import pandas as pd
 import re
@@ -151,8 +152,6 @@ def get_oscilloscpoe_result_keysight(path: str, start: int = 0, end: int = -1):
     # 숫자로 변환
     for col in df.columns:
         df[col] = pd.to_numeric(df[col], errors="coerce")
-    # TIME 단위 변환: s → ms
-    df["TIME"] = df["TIME"] * 1000.0
     # NaN 제거
     df = df.dropna().reset_index(drop=True)
     # 범위 잘라내기
