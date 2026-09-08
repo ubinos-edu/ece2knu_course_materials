@@ -1,5 +1,6 @@
 __pycache__/
 *.pyc
+.history/
 
 *-backups/
 fp-info-cache
