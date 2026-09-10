@@ -109,11 +109,17 @@ def get_simulation_result(file_name, start=0, end=-1):
 def get_oscilloscpoe_result_keysight(path: str, start: int = 0, end: int = -1):
     """
     Keysight 오실로스코프(EDUX/DSOX 시리즈) CSV 파일을 읽어
-    TIME + N개의 채널 컬럼(CH1, CH2, ...)을 dict 로 반환한다.
-    파일 앞부분의 메타데이터(Address, Model, Serial Number, Start Time)는
-    'Sample Count' 헤더 줄을 찾아 건너뛴다.
+    TIME + N개의 채널 컬럼(Sample CH1, Sample CH2, ...)을 dict 로 반환한다.
+    파일 앞부분의 메타데이터(Address, Model, Serial Number, Start Time 등)는 건너뛴다.
+    헤더 줄은 계측기의 언어 설정과 저장 방식에 따라 다음처럼 달라지므로
+        'Sample Count,Time(s),1(VOLT),2(VOLT),'
+        'Sample Number,Time (s),1 (VOLT),2 (VOLT),'
+        '샘플 번호,시간 (s),1 (VOLT),2 (VOLT),'
+    헤더 문구를 찾지 않고, 첫 번째 숫자 데이터 줄 바로 앞의 줄을 헤더로 삼는다.
+    컬럼은 위치로 정한다. 첫 컬럼은 INDEX, 둘째 컬럼은 TIME, 나머지는 채널이며
+    채널 번호는 컬럼 이름 앞의 숫자('1 (VOLT)' 의 1)에서 얻는다.
     줄 끝의 여분 콤마로 생기는 빈 컬럼은 제거한다.
-    TIME 의 단위는 ms 로 변환하여 반환한다.
+    TIME 의 단위는 파일 그대로(초)다.
     Parameters
     ----------
     path : str
@@ -123,31 +129,59 @@ def get_oscilloscpoe_result_keysight(path: str, start: int = 0, end: int = -1):
     end : int, default -1
         읽을 끝 row index. -1 이면 파일 끝까지
     """
-    # 헤더 줄('Sample Count'로 시작) 위치 찾기
+    def split_fields(line):
+        fields = [c.strip() for c in line.rstrip("\r\n").split(",")]
+        while fields and fields[-1] == "":
+            fields.pop()
+        return fields
+
+    def is_numeric_row(fields):
+        if not fields:
+            return False
+        for c in fields:
+            try:
+                float(c)
+            except ValueError:
+                return False
+        return True
+
+    # utf-8-sig 로 열어 파일 맨 앞의 BOM 을 없앤다.
+    with open(path, encoding="utf-8-sig", errors="replace") as f:
+        lines = f.readlines()
+
+    # 첫 번째 숫자 데이터 줄을 찾고, 그 바로 앞의 (비어 있지 않은) 줄을 헤더로 삼는다.
     header_row = None
-    with open(path, encoding="utf-8", errors="replace") as f:
-        for i, line in enumerate(f):
-            if line.startswith("Sample Count"):
-                header_row = i
-                break
+    prev_row = None
+    for i, line in enumerate(lines):
+        fields = split_fields(line)
+        if not fields:
+            continue
+        if is_numeric_row(fields) and prev_row is not None:
+            header_row = prev_row
+            break
+        prev_row = i
     if header_row is None:
-        raise ValueError(f"'Sample Count' 헤더를 찾을 수 없음: {path}")
-    # CSV 읽기
+        raise ValueError(f"헤더 줄(숫자 데이터 바로 앞 줄)을 찾을 수 없음: {path}")
+
+    # 헤더 줄부터 CSV 로 읽는다.
     df = pd.read_csv(
-        path,
+        io.StringIO("".join(lines[header_row:])),
         sep=",",
-        skiprows=header_row,
         index_col=False,        # 줄 끝 콤마 때문에 첫 컬럼이 인덱스로 잡히는 것 방지
-        encoding_errors="replace",
         skip_blank_lines=True,
     )
     # 마지막에 빈 컬럼 제거
     df = df.dropna(axis=1, how="all")
-    # 컬럼명 정리: Time(s) → TIME, 1(VOLT) → CH1, 2(VOLT) → CH2, ...
-    rename = {"Sample Count": "INDEX", "Time(s)": "TIME"}
-    for col in df.columns:
-        if col.endswith("(VOLT)"):
-            rename[col] = "Sample CH" + col.split("(")[0]
+    # 컬럼명 정리 (위치 기준): INDEX, TIME, Sample CH1, Sample CH2, ...
+    columns = list(df.columns)
+    rename = {}
+    if len(columns) > 0:
+        rename[columns[0]] = "INDEX"
+    if len(columns) > 1:
+        rename[columns[1]] = "TIME"
+    for k, col in enumerate(columns[2:], start=1):
+        m = re.match(r"\s*(\d+)", str(col))
+        rename[col] = "Sample CH" + (m.group(1) if m else str(k))
     df = df.rename(columns=rename)
     # 숫자로 변환
     for col in df.columns:
